@@ -3,8 +3,8 @@ package com.bandrzejczak.impersonator
 case class KeycloakConfig(
                            authServerUrl: String,
                            realm: String,
-                           adminUsername: String,
-                           adminPassword: String,
+                           impersonatorUsername: String,
+                           impersonatorPassword: String,
                            clientId: String,
                            redirectUri: String
                          )

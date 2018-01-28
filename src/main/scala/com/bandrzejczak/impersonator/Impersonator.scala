@@ -12,21 +12,21 @@ class Impersonator(config: KeycloakConfig)(implicit sttpBackend: SttpBackend[Fut
 
   def impersonate(username: String): Future[(String, Duration)] = {
     for {
-      adminToken <- obtainAdminToken()
-      userId <- getUserId(username, adminToken)
-      impersonatedUserCookies <- impersonateUser(adminToken, userId)
+      impersonatorToken <- obtainImpersonatorToken()
+      userId <- getUserId(username, impersonatorToken)
+      impersonatedUserCookies <- impersonateUser(impersonatorToken, userId)
       userTokenAndTtl <- obtainTokenBasedOnIdentity(impersonatedUserCookies)
     } yield userTokenAndTtl
   }
 
-  private def obtainAdminToken(): Future[String] = {
+  private def obtainImpersonatorToken(): Future[String] = {
     import io.circe.generic.auto._
     sttp
       .post(uri"${config.authServerUrl}/realms/${config.realm}/protocol/openid-connect/token")
       .body(
         "grant_type" -> "password",
-        "username" -> config.adminUsername,
-        "password" -> config.adminPassword,
+        "username" -> config.impersonatorUsername,
+        "password" -> config.impersonatorPassword,
         "client_id" -> config.clientId
       )
       .response(asJson[TokenResponse])
@@ -40,11 +40,11 @@ class Impersonator(config: KeycloakConfig)(implicit sttpBackend: SttpBackend[Fut
       }
   }
 
-  private def getUserId(username: String, adminToken: String): Future[String] = {
+  private def getUserId(username: String, token: String): Future[String] = {
     import io.circe.generic.auto._
     sttp
       .get(uri"${config.authServerUrl}/admin/realms/${config.realm}/users?username=$username")
-      .auth.bearer(adminToken)
+      .auth.bearer(token)
       .response(asJson[List[UserResponse]])
       .send()
       .flatMap {
@@ -57,10 +57,10 @@ class Impersonator(config: KeycloakConfig)(implicit sttpBackend: SttpBackend[Fut
       }
   }
 
-  private def impersonateUser(adminToken: String, userId: String): Future[Seq[(String, String)]] = {
+  private def impersonateUser(token: String, userId: String): Future[Seq[(String, String)]] = {
     sttp
       .post(uri"${config.authServerUrl}/admin/realms/${config.realm}/users/$userId/impersonation")
-      .auth.bearer(adminToken)
+      .auth.bearer(token)
       .send()
       .map { r =>
         val currentTime = ZonedDateTime.now()
