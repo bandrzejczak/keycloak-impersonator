@@ -25,8 +25,8 @@ object Main {
 
     val username = args.head
     val futureToken = impersonator.impersonate(username)
-    val (token, validFor) = Await.result(futureToken, 5.seconds)
-    println(s"Got new token for user $username, that is going to be valid for the next $validFor:")
+    val TokenResponse(token, validFor, _, _) = Await.result(futureToken, 5.seconds)
+    println(s"Got new token for user $username, that is going to be valid for the next $validFor seconds:")
     println(token)
 
     sttpBackend.close()

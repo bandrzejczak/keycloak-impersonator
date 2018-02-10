@@ -1,23 +1,20 @@
 package com.bandrzejczak.impersonator
 
-import java.time.ZonedDateTime
 
 import com.softwaremill.sttp._
 import com.softwaremill.sttp.circe._
 
-import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future}
 
 class Impersonator(config: KeycloakConfig)
                   (implicit sttpBackend: SttpBackend[Future, Nothing], ec: ExecutionContext) {
 
-  def impersonate(username: String): Future[(String, Duration)] = {
+  def impersonate(username: String): Future[TokenResponse] = {
     for {
       impersonatorToken <- obtainImpersonatorToken()
       userId <- getUserId(username, impersonatorToken)
-      impersonatedUserCookies <- impersonateUser(impersonatorToken, userId)
-      userTokenAndTtl <- obtainTokenBasedOnIdentity(impersonatedUserCookies)
-    } yield userTokenAndTtl
+      impersonatedUserToken <- exchangeToken(impersonatorToken, userId)
+    } yield impersonatedUserToken
   }
 
   private def obtainImpersonatorToken(): Future[String] = {
@@ -58,55 +55,25 @@ class Impersonator(config: KeycloakConfig)
       }
   }
 
-  private def impersonateUser(token: String, userId: String): Future[Seq[(String, String)]] = {
+  private def exchangeToken(token: String, userId: String): Future[TokenResponse] = {
+    import io.circe.generic.auto._
     sttp
-      .post(uri"${config.authServerUrl}/admin/realms/${config.realm}/users/$userId/impersonation")
-      .auth.bearer(token)
+      .post(uri"${config.authServerUrl}/realms/${config.realm}/protocol/openid-connect/token")
+      .body(
+        "grant_type" -> "urn:ietf:params:oauth:grant-type:token-exchange",
+        "client_id" -> config.clientId,
+        "requested_subject" -> userId,
+        "subject_token" -> token
+      )
+      .response(asJson[TokenResponse])
       .send()
-      .map { r =>
-        val currentTime = ZonedDateTime.now()
-        r.cookies
-          .filter(_.expires.forall(_.isAfter(currentTime)))
-          .map(cookie => (cookie.name, cookie.value))
-      }
-  }
-
-  private def obtainTokenBasedOnIdentity(impersonatedUserCookies: Seq[(String, String)]): Future[(String, Duration)] = {
-    val authUri = uri"${config.authServerUrl}/realms/${config.realm}/protocol/openid-connect/auth"
-    sttp
-      .get(uri"$authUri?response_mode=fragment&response_type=token&client_id=${config.clientId}&redirect_uri=${config.redirectUri}")
-      .cookies(impersonatedUserCookies: _*)
-      .followRedirects(false) // The response comes in the form of redirect
-      .send()
-      .map(extractTokenAndExpiration)
       .flatMap {
-        case Some(tokenAndDuration) => Future.successful(tokenAndDuration)
-        case None => Future.failed(new RuntimeException("Failed to extract token and duration from response headers"))
+        _.body match {
+          case Left(error) => Future.failed(new RuntimeException(error))
+          case Right(Left(circeError)) => Future.failed(circeError)
+          case Right(Right(tokenResponse)) => Future.successful(tokenResponse)
+        }
       }
   }
 
-  private def extractTokenAndExpiration(response: Response[String]): Option[(String, Duration)] = {
-    for {
-      location <- response.headers.find(_._1 == "Location").map(_._2)
-      queryParams <- extractQueryParams(location)
-      token <- queryParams.get("access_token")
-      expiration <- queryParams.get("expires_in").map(parseExpirationTime)
-    } yield (token, expiration)
-  }
-
-  private def extractQueryParams(location: String): Option[Map[String, String]] = {
-    val uri: Uri = uri"$location"
-    uri.fragment.map { fragment =>
-      fragment
-        .split("&")
-        .toSeq
-        .map(_.split("=").toSeq)
-        .map { case Seq(x, y) => (x, y) }
-        .toMap
-    }
-  }
-
-  private def parseExpirationTime(timeInSeconds: String): Duration = {
-    timeInSeconds.toLong.seconds
-  }
 }
