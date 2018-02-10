@@ -8,7 +8,8 @@ import com.softwaremill.sttp.circe._
 import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future}
 
-class Impersonator(config: KeycloakConfig)(implicit sttpBackend: SttpBackend[Future, Nothing], ec: ExecutionContext) {
+class Impersonator(config: KeycloakConfig)
+                  (implicit sttpBackend: SttpBackend[Future, Nothing], ec: ExecutionContext) {
 
   def impersonate(username: String): Future[(String, Duration)] = {
     for {
